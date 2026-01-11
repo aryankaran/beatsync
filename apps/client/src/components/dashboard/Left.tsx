@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { useRoomStore } from "@/store/room";
 import { Hash } from "lucide-react";
 import { motion } from "motion/react";
+import { AudioFolderUploader } from "../AudioFolderUploader";
 import { AudioUploaderMinimal } from "../AudioUploaderMinimal";
 import { Separator } from "../ui/separator";
 import { ConnectedUsersList } from "./ConnectedUsersList";
@@ -78,10 +79,12 @@ export const Left = ({ className }: LeftProps) => {
           </ul>
         </div>
 
-        <div className="pl-1">
+        <div className="pl-1 space-y-2">
           <AudioUploaderMinimal />
+          <AudioFolderUploader />
         </div>
       </motion.div>
     </motion.div>
   );
 };
+
