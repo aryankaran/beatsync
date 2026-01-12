@@ -4,8 +4,11 @@ import {
   PauseActionSchema,
   PlayActionSchema,
   SetPlaybackControlsSchema,
+  PlayYouTubeActionSchema,
+  PauseYouTubeActionSchema,
+  SeekYouTubeActionSchema,
 } from "./WSRequest";
-import { AudioSourceSchema, ChatMessageSchema, PositionSchema } from "./basic";
+import { AudioSourceSchema, ChatMessageSchema, PositionSchema, YouTubeSourceSchema } from "./basic";
 
 // Client change
 export const ClientDataSchema = z.object({
@@ -32,6 +35,33 @@ const SetAudioSourcesSchema = z.object({
 });
 export type SetAudioSourcesType = z.infer<typeof SetAudioSourcesSchema>;
 
+// Set YouTube sources
+const SetYouTubeSourcesSchema = z.object({
+  type: z.literal("SET_YOUTUBE_SOURCES"),
+  sources: z.array(YouTubeSourceSchema),
+});
+export type SetYouTubeSourcesType = z.infer<typeof SetYouTubeSourcesSchema>;
+
+// Set current mode
+const SetCurrentModeSchema = z.object({
+  type: z.literal("SET_CURRENT_MODE"),
+  mode: z.enum(["library", "youtube"]),
+});
+export type SetCurrentModeType = z.infer<typeof SetCurrentModeSchema>;
+
+// Set selected items
+const SetSelectedAudioSchema = z.object({
+  type: z.literal("SET_SELECTED_AUDIO"),
+  audioUrl: z.string(),
+});
+export type SetSelectedAudioType = z.infer<typeof SetSelectedAudioSchema>;
+
+const SetSelectedYouTubeSchema = z.object({
+  type: z.literal("SET_SELECTED_YOUTUBE"),
+  videoId: z.string(),
+});
+export type SetSelectedYouTubeType = z.infer<typeof SetSelectedYouTubeSchema>;
+
 // Chat update event
 const ChatUpdateSchema = z.object({
   type: z.literal("CHAT_UPDATE"),
@@ -56,6 +86,10 @@ const RoomEventSchema = z.object({
     SetPlaybackControlsSchema,
     ChatUpdateSchema,
     LoadAudioSourceSchema,
+    SetYouTubeSourcesSchema,
+    SetCurrentModeSchema,
+    SetSelectedAudioSchema,
+    SetSelectedYouTubeSchema,
   ]),
 });
 
@@ -98,6 +132,9 @@ export const ScheduledActionSchema = z.object({
     SpatialConfigSchema,
     StopSpatialAudioSchema,
     GlobalVolumeConfigSchema,
+    PlayYouTubeActionSchema,
+    PauseYouTubeActionSchema,
+    SeekYouTubeActionSchema,
   ]),
 });
 

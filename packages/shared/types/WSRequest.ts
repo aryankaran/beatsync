@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { CHAT_CONSTANTS } from "../constants";
-import { AudioSourceSchema, PositionSchema } from "./basic";
+import { AudioSourceSchema, PositionSchema, YouTubeSourceSchema } from "./basic";
 
 // ROOM EVENTS
 export const LocationSchema = z.object({
@@ -32,7 +32,15 @@ export const ClientActionEnum = z.enum([
   "SET_GLOBAL_VOLUME", // Set global volume for all clients
   "SEND_CHAT_MESSAGE", // Send a chat message,
   "AUDIO_SOURCE_LOADED", // Audio source loaded in response to a LOAD_AUDIO_SOURCE request
-  "REORDER_AUDIO_SOURCES" // Reorder audio sources in the room queue
+  "REORDER_AUDIO_SOURCES", // Reorder audio sources in the room queue
+  "PLAY_YOUTUBE",
+  "PAUSE_YOUTUBE",
+  "SEEK_YOUTUBE",
+  "SET_MODE",
+  "ADD_YOUTUBE_SOURCE",
+  "REMOVE_YOUTUBE_SOURCE",
+  "SET_SELECTED_AUDIO",
+  "SET_SELECTED_YOUTUBE",
 ]);
 
 export const NTPRequestPacketSchema = z.object({
@@ -150,6 +158,50 @@ export const ReorderAudioSourcesSchema = z.object({
   reorderedAudioSources: z.array(AudioSourceSchema).min(1),
 });
 
+// YouTube action schemas
+export const PlayYouTubeActionSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.PLAY_YOUTUBE),
+  trackTimeSeconds: z.number(),
+  videoId: z.string(),
+});
+
+export const PauseYouTubeActionSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.PAUSE_YOUTUBE),
+  videoId: z.string(),
+  trackTimeSeconds: z.number(),
+});
+
+export const SeekYouTubeActionSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.SEEK_YOUTUBE),
+  videoId: z.string(),
+  trackTimeSeconds: z.number(),
+});
+
+export const SetModeActionSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.SET_MODE),
+  mode: z.enum(["library", "youtube"]),
+});
+
+export const AddYouTubeSourceActionSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.ADD_YOUTUBE_SOURCE),
+  source: YouTubeSourceSchema,
+});
+
+export const RemoveYouTubeSourceActionSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.REMOVE_YOUTUBE_SOURCE),
+  videoId: z.string(),
+});
+
+export const SetSelectedAudioActionSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.SET_SELECTED_AUDIO),
+  audioUrl: z.string(),
+});
+
+export const SetSelectedYouTubeActionSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.SET_SELECTED_YOUTUBE),
+  videoId: z.string(),
+});
+
 export const WSRequestSchema = z.discriminatedUnion("type", [
   PlayActionSchema,
   PauseActionSchema,
@@ -171,6 +223,14 @@ export const WSRequestSchema = z.discriminatedUnion("type", [
   SendChatMessageSchema,
   AudioSourceLoadedSchema,
   ReorderAudioSourcesSchema,
+  PlayYouTubeActionSchema,
+  PauseYouTubeActionSchema,
+  SeekYouTubeActionSchema,
+  SetModeActionSchema,
+  AddYouTubeSourceActionSchema,
+  RemoveYouTubeSourceActionSchema,
+  SetSelectedAudioActionSchema,
+  SetSelectedYouTubeActionSchema,
 ]);
 export type WSRequestType = z.infer<typeof WSRequestSchema>;
 export type PlayActionType = z.infer<typeof PlayActionSchema>;
@@ -178,6 +238,22 @@ export type PauseActionType = z.infer<typeof PauseActionSchema>;
 export type ReorderClientType = z.infer<typeof ReorderClientSchema>;
 export type SetListeningSourceType = z.infer<typeof SetListeningSourceSchema>;
 export type ReorderAudioSourcesType = z.infer<typeof ReorderAudioSourcesSchema>;
+export type PlayYouTubeActionType = z.infer<typeof PlayYouTubeActionSchema>;
+export type PauseYouTubeActionType = z.infer<typeof PauseYouTubeActionSchema>;
+export type SeekYouTubeActionType = z.infer<typeof SeekYouTubeActionSchema>;
+export type SetModeActionType = z.infer<typeof SetModeActionSchema>;
+export type AddYouTubeSourceActionType = z.infer<
+  typeof AddYouTubeSourceActionSchema
+>;
+export type RemoveYouTubeSourceActionType = z.infer<
+  typeof RemoveYouTubeSourceActionSchema
+>;
+export type SetSelectedAudioActionType = z.infer<
+  typeof SetSelectedAudioActionSchema
+>;
+export type SetSelectedYouTubeActionType = z.infer<
+  typeof SetSelectedYouTubeActionSchema
+>;
 
 // Mapped type to access request types by their type field
 export type ExtractWSRequestFrom = {

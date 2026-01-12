@@ -1,22 +1,24 @@
 import {
   AudioSourceType,
-  ChatMessageSchema,
-  ChatMessageType,
-  ClientDataSchema,
   ClientDataType,
-  DiscoveryRoomType,
   epochNow,
+  YouTubeSourceType,
+  PositionType,
+  WSBroadcastType,
   NTP_CONSTANTS,
   PauseActionType,
+  PlayYouTubeActionType,
+  PauseYouTubeActionType,
+  SeekYouTubeActionType,
   PlayActionType,
   PlaybackControlsPermissionsEnum,
   PlaybackControlsPermissionsType,
-  PositionType,
   RoomType,
-  WSBroadcastType,
+  ChatMessageSchema,
+  ChatMessageType,
+  ClientDataSchema,
 } from "@beatsync/shared";
 import { AudioSourceSchema, GRID } from "@beatsync/shared/types/basic";
-import { SendLocationSchema } from "@beatsync/shared/types/WSRequest";
 import { Server, ServerWebSocket } from "bun";
 import { z } from "zod";
 import { calculateScheduleTimeMs, DEFAULT_CLIENT_RTT_MS } from "../config";
@@ -26,15 +28,20 @@ import { sendBroadcast, sendUnicast } from "../utils/responses";
 import { positionClientsInCircle } from "../utils/spatial";
 import { WSData } from "../utils/websocket";
 import { ChatManager } from "./ChatManager";
+import { SendLocationSchema } from "@beatsync/shared/types/WSRequest";
 
 interface RoomData {
   audioSources: AudioSourceType[];
+  youtubeSources: YouTubeSourceType[];
+  currentMode: "library" | "youtube";
+  selectedAudioUrl: string;
+  selectedYouTubeId: string;
   clients: ClientDataType[];
   roomId: string;
   intervalId?: NodeJS.Timeout;
   listeningSource: PositionType;
   playbackControlsPermissions: PlaybackControlsPermissionsType;
-  globalVolume: number; // Master volume multiplier (0-1)
+  globalVolume: number;
 }
 
 export const ClientCacheBackupSchema = z.record(
@@ -80,24 +87,19 @@ const INITIAL_PLAYBACK_STATE: RoomPlaybackState = {
   trackPositionSeconds: 0,
 };
 
-interface PendingPlayState {
-  clientsLoaded: Set<string>;
-  timeout: NodeJS.Timeout;
-  playAction: PlayActionType;
-  initiatorClientId: string;
-  server: Server;
-}
-
 /**
  * RoomManager handles all operations for a single room.
  * Each room has its own instance of RoomManager.
  */
 export class RoomManager {
-  private static readonly AUDIO_LOAD_TIMEOUT_MS = 3000; // 3 seconds max wait for audio loading
-
   private clientData = new Map<string, ClientDataType>(); // map of clientId -> client data
   private wsConnections = new Map<string, ServerWebSocket<WSData>>(); // map of clientId -> ws
+  private clientCache = new Map<string, { isAdmin: boolean }>(); // user id -> isAdmin
   private audioSources: AudioSourceType[] = [];
+  private youtubeSources: YouTubeSourceType[] = [];
+  private currentMode: "library" | "youtube" = "library";
+  private selectedAudioUrl: string = "";
+  private selectedYouTubeId: string = "";
   private listeningSource: PositionType = {
     x: GRID.ORIGIN_X,
     y: GRID.ORIGIN_Y,
@@ -114,8 +116,6 @@ export class RoomManager {
   private activeStreamJobs = new Map<string, { status: string }>();
   private chatManager: ChatManager;
 
-  // Audio loading state for synchronized playback
-  private pendingPlay?: PendingPlayState;
   constructor(
     private readonly roomId: string,
     onClientCountChange?: () => void // To update the global # of clients active
@@ -129,168 +129,6 @@ export class RoomManager {
    */
   getRoomId(): string {
     return this.roomId;
-  }
-
-  clearAudioLoadingState(): void {
-    if (!this.pendingPlay) return;
-    // Clear the timeout
-    if (this.pendingPlay.timeout) {
-      clearTimeout(this.pendingPlay.timeout);
-    }
-
-    // Clear the pending play
-    this.pendingPlay = undefined;
-  }
-
-  /**
-   * Initiate audio source loading for all clients before playback
-   */
-  initiateAudioSourceLoad(
-    playAction: PlayActionType,
-    initiatorClientId: string,
-    server: Server
-  ): void {
-    // Clear any existing loading state
-    this.clearAudioLoadingState();
-
-    // Find the audio source to load
-    const audioSource = this.audioSources.find(
-      (source) => source.url === playAction.audioSource
-    );
-
-    if (!audioSource) {
-      console.warn(
-        `Cannot load non-existent audio source: ${playAction.audioSource}`
-      );
-      return;
-    }
-
-    // Set up timeout to execute play even if some clients don't respond
-    const timeout = setTimeout(() => {
-      console.log(
-        `Audio loading timeout reached after ${RoomManager.AUDIO_LOAD_TIMEOUT_MS}ms. Proceeding with play.`
-      );
-      this.executeScheduledPlay(server);
-    }, RoomManager.AUDIO_LOAD_TIMEOUT_MS);
-
-    // Store pending play state
-    this.pendingPlay = {
-      clientsLoaded: new Set([initiatorClientId]),
-      timeout,
-      playAction,
-      initiatorClientId,
-      server,
-    };
-
-    // Broadcast LOAD_AUDIO_SOURCE to all clients
-    sendBroadcast({
-      server,
-      roomId: this.roomId,
-      message: {
-        type: "ROOM_EVENT",
-        event: {
-          type: "LOAD_AUDIO_SOURCE",
-          audioSourceToPlay: audioSource,
-        },
-      },
-    });
-
-    console.log(
-      `Initiated audio loading for ${audioSource.url} in room ${this.roomId}`
-    );
-  }
-
-  allClientsLoadedPendingSource(): boolean {
-    if (!this.pendingPlay) {
-      console.warn(`Room ${this.roomId}: No pending play state found`);
-      return false;
-    }
-
-    const clientCount = this.getClients().length;
-    // Don't start playback if there are no clients
-    if (clientCount === 0) {
-      return false;
-    }
-
-    return this.pendingPlay.clientsLoaded.size === clientCount;
-  }
-
-  /**
-   * Process when a client reports they've loaded the audio source
-   */
-  processClientLoadedAudioSource(clientId: string, server: Server): void {
-    if (!this.pendingPlay) {
-      console.warn(
-        `Room ${this.roomId}: Client ${clientId} reported audio source loaded, but no pending play state found`
-      );
-      return;
-    }
-
-    // Add client to loaded set
-    this.pendingPlay.clientsLoaded.add(clientId);
-
-    const loadedCount = this.pendingPlay.clientsLoaded.size;
-    const totalCount = this.getClients().length;
-    console.log(
-      `Room ${this.roomId}: ${loadedCount}/${totalCount} clients loaded audio`
-    );
-
-    // Check if all active clients have loaded
-    if (this.allClientsLoadedPendingSource()) {
-      console.log(
-        `Room ${this.roomId}: All clients loaded. Starting playback.`
-      );
-      this.executeScheduledPlay(server);
-    }
-  }
-
-  /**
-   * Execute the scheduled play after audio loading is complete
-   * Could be called by either the timeout or explicitly because all clients loaded
-   */
-  private executeScheduledPlay(server: Server): void {
-    if (!this.pendingPlay) {
-      return;
-    }
-
-    const { playAction } = this.pendingPlay;
-
-    // Clear everything here
-    this.clearAudioLoadingState();
-
-    // Use dynamic scheduling based on max client RTT
-    const serverTimeToExecute = this.getScheduledExecutionTime();
-
-    // Update playback state
-    const success = this.updatePlaybackSchedulePlay(
-      playAction,
-      serverTimeToExecute
-    );
-
-    if (success) {
-      // Send the scheduled play action
-      sendBroadcast({
-        server,
-        roomId: this.roomId,
-        message: {
-          type: "SCHEDULED_ACTION",
-          scheduledAction: playAction,
-          serverTimeToExecute,
-        },
-      });
-
-      console.log(
-        `Executed scheduled play for ${playAction.audioSource} in room ${this.roomId}`
-      );
-    } else {
-      console.warn(
-        `Failed to execute play - track may have been removed: ${playAction.audioSource}`
-      );
-    }
-  }
-
-  getAudioSources(): AudioSourceType[] {
-    return this.audioSources;
   }
 
   getPlaybackControlsPermissions(): PlaybackControlsPermissionsType {
@@ -352,13 +190,11 @@ export class RoomManager {
    * Remove a client from the room
    */
   removeClient(clientId: string): void {
-    // Only remove from wsConnections, keep clientData for rejoin scenarios
     this.wsConnections.delete(clientId);
 
     const activeClients = this.getClients();
     // Reposition remaining clients if any
     if (activeClients.length > 0) {
-      // Always check to ensure there is at least one admin
       positionClientsInCircle(activeClients);
 
       // Check if any admins remain after removing this client
@@ -380,21 +216,6 @@ export class RoomManager {
     } else {
       // Stop heartbeat checking if no clients remain
       this.stopHeartbeatChecking();
-    }
-
-    // Check if we were waiting for this client to load audio
-    if (this.pendingPlay) {
-      // Remove client from loaded set if they were there
-      this.pendingPlay.clientsLoaded.delete(clientId);
-
-      // Recheck if all remaining clients have loaded
-      if (this.allClientsLoadedPendingSource()) {
-        console.log(
-          `Client left during loading. All remaining clients loaded. Starting playback.`
-        );
-        // Use the stored server reference
-        this.executeScheduledPlay(this.pendingPlay.server);
-      }
     }
 
     // Notify that client count changed
@@ -509,6 +330,10 @@ export class RoomManager {
   getState(): RoomData {
     return {
       audioSources: this.audioSources,
+      youtubeSources: this.youtubeSources,
+      currentMode: this.currentMode,
+      selectedAudioUrl: this.selectedAudioUrl,
+      selectedYouTubeId: this.selectedYouTubeId,
       clients: this.getClients(),
       roomId: this.roomId,
       intervalId: this.intervalId,
@@ -1141,5 +966,67 @@ export class RoomManager {
     }
 
     this.audioSources = newOrder;
+  }
+
+  // YouTube methods
+  addYouTubeSource(source: YouTubeSourceType): void {
+    this.youtubeSources.push(source);
+  }
+
+  removeYouTubeSource(videoId: string): void {
+    this.youtubeSources = this.youtubeSources.filter(s => s.videoId !== videoId);
+    // If we're removing the currently selected video, clear selection
+    if (this.selectedYouTubeId === videoId) {
+      this.selectedYouTubeId = "";
+    }
+  }
+
+  setCurrentMode(mode: "library" | "youtube"): void {
+    this.currentMode = mode;
+  }
+
+  setSelectedAudio(audioUrl: string): void {
+    this.selectedAudioUrl = audioUrl;
+  }
+
+  setSelectedYouTube(videoId: string): void {
+    this.selectedYouTubeId = videoId;
+  }
+
+  updatePlaybackSchedulePlayYouTube(
+    playSchema: PlayYouTubeActionType,
+    serverTimeToExecute: number
+  ): void {
+    this.playbackState = {
+      type: "playing",
+      audioSource: playSchema.videoId, // Use videoId as the "audio source" for YouTube
+      trackPositionSeconds: playSchema.trackTimeSeconds,
+      serverTimeToExecute: serverTimeToExecute,
+    };
+  }
+
+  updatePlaybackSchedulePauseYouTube(
+    pauseSchema: PauseYouTubeActionType,
+    serverTimeToExecute: number
+  ): void {
+    this.playbackState = {
+      type: "paused",
+      audioSource: pauseSchema.videoId,
+      trackPositionSeconds: pauseSchema.trackTimeSeconds,
+      serverTimeToExecute: serverTimeToExecute,
+    };
+  }
+
+  updatePlaybackScheduleSeekYouTube(
+    seekSchema: SeekYouTubeActionType,
+    serverTimeToExecute: number
+  ): void {
+    // For seek, we update the track position but keep the current play/pause state
+    this.playbackState = {
+      ...this.playbackState,
+      audioSource: seekSchema.videoId,
+      trackPositionSeconds: seekSchema.trackTimeSeconds,
+      serverTimeToExecute: serverTimeToExecute,
+    };
   }
 }
